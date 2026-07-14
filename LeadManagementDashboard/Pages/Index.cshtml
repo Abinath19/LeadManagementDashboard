@@ -1,10 +1,159 @@
 ﻿@page
 @model IndexModel
 @{
-    ViewData["Title"] = "Home page";
+    ViewData["Title"] = "Dashboard";
 }
 
-<div class="text-center">
-    <h1 class="display-4">Welcome</h1>
-    <p>Learn about <a href="https://learn.microsoft.com/aspnet/core">building Web apps with ASP.NET Core</a>.</p>
+<div class="row g-3">
+    @foreach (var column in Model.Dashboard.Columns)
+    {
+        <div class="col-12 col-md-6 col-xl-3">
+            <div class="card kanban-column shadow-sm h-100">
+                <div class="card-header kanban-column-header d-flex justify-content-between align-items-center"
+                     style="background-color:@column.ColorCode">
+                    <span class="fw-semibold">@column.Name</span>
+                    <span class="badge bg-light text-dark">@column.LeadCount</span>
+                </div>
+                <div class="card-body p-2">
+                    @if (column.LeadCount == 0)
+                    {
+                        <p class="text-muted text-center small my-4">No leads</p>
+                    }
+                    else
+                    {
+                        @foreach (var lead in column.Leads)
+                        {
+                            <div class="card lead-card mb-2 border"
+                                 data-lead-id="@lead.Id" role="button" tabindex="0"
+                                 aria-label="View details for @lead.FullName">
+                                <div class="card-body p-2">
+                                    <div class="fw-semibold">@lead.FullName</div>
+                                    <div class="small text-muted text-truncate">@lead.Email</div>
+                                    @if (!string.IsNullOrWhiteSpace(lead.Company))
+                                    {
+                                        <div class="small"><i class="bi bi-building me-1"></i>@lead.Company</div>
+                                    }
+                                    <div class="d-flex justify-content-between mt-2">
+                                        @if (!column.IsFirst)
+                                        {
+                                            <form method="post" asp-page-handler="Move" onclick="event.stopPropagation()">
+                                                <input type="hidden" name="leadId" value="@lead.Id" />
+                                                <input type="hidden" name="direction" value="Backward" />
+                                                <button type="submit" class="btn btn-sm btn-outline-secondary"
+                                                        title="Move backward">
+                                                    <i class="bi bi-arrow-left"></i>
+                                                </button>
+                                            </form>
+                                        }
+                                        else
+                                        {
+                                            <span></span>
+                                        }
+                                        @if (!column.IsLast)
+                                        {
+                                            <form method="post" asp-page-handler="Move" onclick="event.stopPropagation()">
+                                                <input type="hidden" name="leadId" value="@lead.Id" />
+                                                <input type="hidden" name="direction" value="Forward" />
+                                                <button type="submit" class="btn btn-sm btn-outline-primary"
+                                                        title="Move forward">
+                                                    <i class="bi bi-arrow-right"></i>
+                                                </button>
+                                            </form>
+                                        }
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    }
 </div>
+
+<!-- Lead detail modal -->
+<div class="modal fade" id="leadDetailModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="leadDetailTitle">Lead details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="leadDetailBody">
+                <div class="text-center py-4">
+                    <div class="spinner-border" role="status"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@section Scripts {
+    <script>
+        // --- Toast notification (message passed via TempData) ---
+        const toastMessage = '@Html.Raw(System.Text.Encodings.Web.JavaScriptEncoder.Default.Encode(Model.ToastMessage ?? ""))';
+        const toastIsError = @(Model.ToastIsError ? "true" : "false");
+
+        if (toastMessage) {
+            const container = document.getElementById('toastContainer');
+            const el = document.createElement('div');
+            el.className = `toast align-items-center text-bg-${toastIsError ? 'danger' : 'success'} border-0`;
+            el.setAttribute('role', 'alert');
+            el.innerHTML = `
+                <div class="d-flex">
+                    <div class="toast-body">${toastMessage}</div>
+                    <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+                </div>`;
+            container.appendChild(el);
+            new bootstrap.Toast(el, { delay: 4000 }).show();
+        }
+
+        // --- Lead detail modal ---
+        const modalEl = document.getElementById('leadDetailModal');
+        const modal = new bootstrap.Modal(modalEl);
+
+        document.querySelectorAll('.lead-card').forEach(card => {
+            card.addEventListener('click', () => openLeadDetail(card.dataset.leadId));
+        });
+
+        async function openLeadDetail(leadId) {
+            const body = document.getElementById('leadDetailBody');
+            body.innerHTML = '<div class="text-center py-4"><div class="spinner-border" role="status"></div></div>';
+            modal.show();
+
+            try {
+                const response = await fetch(`?handler=LeadDetail&id=${leadId}`);
+                if (!response.ok) throw new Error('Request failed');
+                const lead = await response.json();
+
+                document.getElementById('leadDetailTitle').textContent = lead.fullName;
+
+                const activityRows = (lead.activities ?? []).map(a => `
+                    <tr>
+                        <td>${a.fromStatus ?? '<span class="text-muted">—</span>'}</td>
+                        <td>${a.toStatus}</td>
+                        <td>${new Date(a.changedAt).toLocaleString()}</td>
+                        <td>${a.note ?? ''}</td>
+                    </tr>`).join('');
+
+                body.innerHTML = `
+                    <dl class="row mb-4">
+                        <dt class="col-sm-3">Email</dt><dd class="col-sm-9">${lead.email}</dd>
+                        <dt class="col-sm-3">Phone</dt><dd class="col-sm-9">${lead.phone ?? '—'}</dd>
+                        <dt class="col-sm-3">Company</dt><dd class="col-sm-9">${lead.company ?? '—'}</dd>
+                        <dt class="col-sm-3">Current status</dt><dd class="col-sm-9">${lead.statusName}</dd>
+                        <dt class="col-sm-3">Created</dt><dd class="col-sm-9">${new Date(lead.createdAt).toLocaleString()}</dd>
+                    </dl>
+                    <h6>Activity history</h6>
+                    ${activityRows
+                        ? `<table class="table table-sm table-striped">
+                               <thead><tr><th>From</th><th>To</th><th>When</th><th>Note</th></tr></thead>
+                               <tbody>${activityRows}</tbody>
+                           </table>`
+                        : '<p class="text-muted">No activity recorded yet.</p>'}`;
+            } catch {
+                body.innerHTML = '<div class="alert alert-danger mb-0">Could not load lead details.</div>';
+            }
+        }
+    </script>
+}
